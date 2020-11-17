@@ -32,15 +32,50 @@ week_11 <- shaming %>%
 
 1) How many voters got which treatments and how many voted in the 2006 primary? 
 
+```{r}
+# week_11 %>%
+#   group_by(treatment) %>%
+#   summarize(number = n(), voted = sum(primary_06), .groups = "drop")
+
+week_11 %>%
+  count(treatment, primary_06)
+```
+
+
 2) Explore `birth_year`. Does it make sense? If we got handed a new data set for today, would `birth_year` mean the same thing? Might we want to transform it into something different so that our model would "work" with today's data?
+
+Age might be more helpful / easier to interpret.
 
 3) There are a bunch of voting records. What do they mean? Are they all recorded in the same way? How are they connected to each other? Do we want to use them all?
 
+primary_06 is indicator, the other ones are characters (not even logicals) -- can change all of them to the same format. General_04 is all yes (because you only chose from people who voted in 2004, so this is unhelpful).
+
 4) Explore the `no_of_names` variable? How is it distributed? What does it mean? Can we use it in our modeling?
+
+There are lots of NAs in the dataset -- hard to use in our modeling. At least 75% of the values are 21, but there are some values of 12! We should just ignore it. 
 
 5) Check out `hh_size`. What does it mean? Is the distribution sensible? Might it be a good idea to create a new variable which is more likely to capture an effect of interest? For example, I bet that that there is a big difference between living by yourself and living with other people. I bet that there is much less difference between living with 3 versus 4 people.
 
+Make series of indicators -- bigger marginal effect at low numbers
+
 6) Are the factor levels for treatment convenient? Try a simple regression and see! How can we change them?
+
+We'd like to reorder the coefs so control appears first. 
+
+```{r}
+
+week_11_clean <- week_11 %>%
+  mutate(age = 2006 - birth_year,
+         primary_02 = ifelse(primary_02 == "Yes", 1, 0),
+         general_02 = ifelse(general_02 == "Yes", 1, 0),
+         primary_04 = ifelse(primary_04 == "Yes", 1, 0),
+         general_04 = ifelse(general_04 == "Yes", 1, 0),
+         treatment = fct_relevel(treatment, "Control"),
+         single_hh = ifelse(hh_size == 1, 1, 0))
+
+lm(primary_06 ~ treatment - 1, data = week_11)
+```
+
 
 Perform other exploratory data analysis.  What other variables are connected to voting? What other variables are suspect/concerning?
 
@@ -62,17 +97,54 @@ Perform other exploratory data analysis.  What other variables are connected to 
 knitr::include_graphics("simko_importance.png")
 ```
 
+```{r}
+week_11_split <- initial_split(week_11_clean, prob = 0.8)
+week_11_train <- training(week_11_split)
+week_11_test <- testing(week_11_split)
+```
+
+
+```{r}
+week_11_obj <- stan_glm(primary_06 ~ treatment + 1 , data = week_11_train,
+                        refresh = 0)
+
+print(week_11_obj, digits = 3)
+```
+
+Without an intercept you can get coefficients for every level, with an indicator you'll get NA for one of them (because the intercept is just a linear combination of the different factor levels). We get that experiencing Civic Duty treatment gives you a 30.6% chance of voting compared to 29.7% with control, etc. 
+
 * What is the causal effect?
+
+Looks like Civic duty is insignificant, but Hawthorne, Self, and Neighbors all seem to increase turnout significantly. Among these it looks like Neighbors is the highest, but not significantly so. 
 
 * What is the meaning --- in words and mathematically --- of something like `treatmentSelf`? After all, it is not a variable in our data set . . .
 
+treatmentSelf is the coefficient of experiencing the Self level in treatment -- you can think of this as if we separated the factor into a bunch of dummies. 
+
 * Compare the model with the intercept to the one without. Are they the same? Explain.
+
+Yes. For the one with an intercept, the value of the intercept equals the value of the missing / undefined treatment (i.e. the case where all the other indicators are false).
 
 
 
 ## Scene 3
 
 **Prompt:** Explore a variety models which explain `primary_06` as a function of the variables in our data set. Make sure to explore some interaction terms. 
+
+```{r}
+workflow_1 <- workflow() %>%
+  add_model(linear_reg %>% set_engine("stan")) %>%
+  add_recipe(recipe(primary_06 ~ treatment + primary_02 + primary_06 + general_02,
+                    data = week_11_train))
+
+workflow_1 %>%
+  fit(data = week_11_train) %>%
+  predict(new_data = week_11_train) %>%
+  bind_cols(week_11_train %>% select(primary_06)) %>%
+  metrics(truth = primary_06, estimate = `.pred`)
+
+```
+
 
 * Come up with at least two models that a) you like and would be willing to defend and b) are somewhat different from one another. The two most common model types in these situations are "simple" and "full". The former includes a minimum number of variables. The latter errs on the side of variable inclusion and the creation of interaction terms.
 
